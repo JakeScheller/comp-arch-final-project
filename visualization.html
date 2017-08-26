@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <style>
+        html {
+            height: 100%;
+        }
+        body {
+            display: flex;
+            flex-flow: column nowrap;
+            min-height: 100%;
+            margin: 0;
+            background-color: black;
+        }
+        canvas {
+            flex-grow: 1;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+<canvas></canvas>
+<script>
+/////////////////////////////
+// INSTRUCTIONS /////////////
+/////////////////////////////
+
+// The maze generation starts automatically.
+// Press space to pause. Press space again to play.
+// While paused, press '.' (period) to advance one frame.
+// While playing, press the left and right arrow keys to change the speed.
+// While playing, press the up arrow key to engage TurboBoost®
+// Press enter to immediately complete the maze.
+// Once the maze has finished generating, it will turn white.
+// At that time, press space or enter to begin flooding it with color.
+// The same controls apply to the color flooding as to the maze generation.
+
+
+
+/////////////////////////////
+// USER-DEFINED VARIABLES ///
+/////////////////////////////
+
+//var cell_size_px = 4;
+//var maze_width_cells = 158;
+//var maze_height_cells = 75;
+
+//var cell_size_px = 1;
+//var maze_width_cells = 630;
+//var maze_height_cells = 300;
+
+var cell_size_px = 10;
+var maze_width_cells = 63;
+var maze_height_cells = 30;
+
+var branchiness = 10; // 0 to 100
+var start_pos = 0;
+// var start_pos = (maze_width_cells*(maze_height_cells/2)+(maze_width_cells/2))|0;
+//var start_hue = 0; // 0 to 360
+var start_hue = 180;
+
+
+
+/////////////////////////////
+// CANVAS ///////////////////
+/////////////////////////////
+
+var canvas = document.querySelector("canvas");
+canvas.width = canvas.clientWidth;
+canvas.height = canvas.clientHeight;
+var context = canvas.getContext("2d");
+context.fillStyle = "white";
+var old_fill_style = context.fillStyle;
+
+function mazePosToCanvasCoords(pos) {
+    var maze_x = pos % maze_width_cells;
+    var maze_y = (pos / maze_width_cells) | 0;
+    var canvas_x = maze_x * 2 * cell_size_px;
+    var canvas_y = maze_y * 2 * cell_size_px;
+    return [canvas_x, canvas_y];
+}
+
+function setFillStyle(style) {
+    if (style != undefined) {
+        old_fill_style = context.fillStyle;
+        context.fillStyle = style;
+    }
+}
+function restoreFillStyle() {
+    context.fillStyle = old_fill_style;
+}
+
+function resetMazeColor() {
+    for (var pos = 0; pos < maze.length; pos++) {
+        fillCellAndExit(pos);
+    }
+}
+
+function fillCell(pos, style) {
+    setFillStyle(style);
+    var coords = mazePosToCanvasCoords(pos);
+    context.fillRect(coords[0], coords[1], cell_size_px, cell_size_px);
+    restoreFillStyle();
+}
+function fillNorthExit(pos, style) {
+    setFillStyle(style);
+    var coords = mazePosToCanvasCoords(pos);
+    context.fillRect(coords[0], coords[1]-cell_size_px, cell_size_px, cell_size_px);
+    restoreFillStyle();
+}
+function fillSouthExit(pos, style) {
+    setFillStyle(style);
+    var coords = mazePosToCanvasCoords(pos);
+    context.fillRect(coords[0], coords[1]+cell_size_px, cell_size_px, cell_size_px);
+    restoreFillStyle();
+}
+function fillEastExit(pos, style) {
+    setFillStyle(style);
+    var coords = mazePosToCanvasCoords(pos);
+    context.fillRect(coords[0]+cell_size_px, coords[1], cell_size_px, cell_size_px);
+    restoreFillStyle();
+}
+function fillWestExit(pos, style) {
+    setFillStyle(style);
+    var coords = mazePosToCanvasCoords(pos);
+    context.fillRect(coords[0]-cell_size_px, coords[1], cell_size_px, cell_size_px);
+    restoreFillStyle();
+}
+function fillCellAndExit(pos, style) {
+    fillCell(pos, style);
+    if ((maze[pos] & DIR_NORTH) == DIR_NORTH) {
+        fillNorthExit(pos, style);
+    }
+    if ((maze[pos] & DIR_SOUTH) == DIR_SOUTH) {
+        fillSouthExit(pos, style);
+    }
+    if ((maze[pos] & DIR_EAST) == DIR_EAST) {
+        fillEastExit(pos, style);
+    }
+    if ((maze[pos] & DIR_WEST) == DIR_WEST) {
+        fillWestExit(pos, style);
+    }
+}
+
+
+
+/////////////////////////////
+// MOVEMENT AND DIRECTIONS //
+/////////////////////////////
+
+// Bit flags
+var VISITED    = 0b10000000;
+var CLOSED     = 0b01000000;
+var OPEN_SOUTH = 0b00000010;
+var OPEN_EAST  = 0b00000001;
+var DIR_NORTH  = 0b00100000;
+var DIR_SOUTH  = 0b00010000;
+var DIR_EAST   = 0b00001000;
+var DIR_WEST   = 0b00000100;
+
+function resetVisited() {
+    for (var pos = 0; pos < maze.length; pos++) {
+        maze[pos] &= ~VISITED;
+    }
+    maze[start_pos] |= VISITED;
+}
+
+function goNorth(pos) {
+    return pos - maze_width_cells;
+}
+function goSouth(pos) {
+    return pos + maze_width_cells;
+}
+function goEast(pos) {
+    return pos + 1;
+}
+function goWest(pos) {
+    return pos - 1;
+}
+
+function canMoveNorth(pos) {
+    return (goNorth(pos) >= 0);
+}
+function canMoveSouth(pos) {
+    return (goSouth(pos) < maze_width_cells * maze_height_cells);
+}
+function canMoveEast(pos) {
+    return (goEast(pos) % maze_width_cells > 0);
+}
+function canMoveWest(pos) {
+    return (pos % maze_width_cells > 0);
+}
+
+function isNorthOpen(pos) {
+    return ((maze[goNorth(pos)] & VISITED) == 0);
+}
+function isSouthOpen(pos) {
+    return ((maze[goSouth(pos)] & VISITED) == 0);
+}
+function isEastOpen(pos) {
+    return ((maze[goEast(pos)] & VISITED) == 0);
+}
+function isWestOpen(pos) {
+    return ((maze[goWest(pos)] & VISITED) == 0);
+}
+
+function getOpenDirections(pos) {
+    var open_dirs = [];
+    if (canMoveNorth(pos) && isNorthOpen(pos)) {
+        open_dirs.push(DIR_NORTH);
+    }
+    if (canMoveSouth(pos) && isSouthOpen(pos)) {
+        open_dirs.push(DIR_SOUTH);
+    }
+    if (canMoveEast(pos) && isEastOpen(pos)) {
+        open_dirs.push(DIR_EAST);
+    }
+    if (canMoveWest(pos) && isWestOpen(pos)) {
+        open_dirs.push(DIR_WEST);
+    }
+    return open_dirs;
+}
+function getClosedDirections(pos) {
+    var closed_dirs = [];
+    if (canMoveNorth(pos) && !isNorthOpen(pos)) {
+        closed_dirs.push(DIR_NORTH);
+    }
+    if (canMoveSouth(pos) && !isSouthOpen(pos)) {
+        closed_dirs.push(DIR_SOUTH);
+    }
+    if (canMoveEast(pos) && !isEastOpen(pos)) {
+        closed_dirs.push(DIR_EAST);
+    }
+    if (canMoveWest(pos) && !isWestOpen(pos)) {
+        closed_dirs.push(DIR_WEST);
+    }
+    return closed_dirs;
+}
+
+
+
+/////////////////////////////
+// MAZE GENERATION //////////
+/////////////////////////////
+
+var maze = new Array(maze_width_cells * maze_height_cells).fill(0);
+
+var stack = [start_pos];
+maze[start_pos] |= VISITED;
+
+var max_stack_len = 0;
+
+function doNextMazeGenerationStep() {
+    if (stack.length == 0){
+        return true;
+    }
+
+    if (stack.length > max_stack_len) {
+        max_stack_len = stack.length;
+        console.log(max_stack_len);
+    }
+
+    var cur_pos_idx = undefined;
+    if (Math.random() * 100 < branchiness) {
+        cur_pos_idx = (Math.random() * stack.length) | 0;
+    }
+    else {
+        cur_pos_idx = stack.length - 1;
+    }
+
+    var cur_pos = stack[cur_pos_idx];
+    var open_dirs = getOpenDirections(cur_pos);
+    fillCell(cur_pos);
+
+    if (open_dirs.length > 0) {
+        var move_dir_idx = (Math.random() * open_dirs.length) | 0;
+        var move_dir = open_dirs[move_dir_idx];
+
+        var new_pos = undefined;
+        if (move_dir == DIR_NORTH) {
+            maze[cur_pos] |= DIR_NORTH;
+            new_pos = goNorth(cur_pos);
+            maze[new_pos] |= DIR_SOUTH;
+            fillSouthExit(new_pos);
+        }
+        else if (move_dir == DIR_SOUTH) {
+            fillSouthExit(cur_pos);
+            maze[cur_pos] |= DIR_SOUTH;
+            new_pos = goSouth(cur_pos);
+            maze[new_pos] |= DIR_NORTH;
+        }
+        else if (move_dir == DIR_EAST) {
+            fillEastExit(cur_pos);
+            maze[cur_pos] |= DIR_EAST;
+            new_pos = goEast(cur_pos);
+            maze[new_pos] |= DIR_WEST;
+        }
+        else if (move_dir == DIR_WEST) {
+            maze[cur_pos] |= DIR_WEST;
+            new_pos = goWest(cur_pos);
+            maze[new_pos] |= DIR_EAST;
+            fillEastExit(new_pos);
+        }
+
+        maze[new_pos] |= VISITED;
+        stack.push(new_pos);
+        fillCell(new_pos, "dodgerblue");
+    }
+    else {
+        stack[cur_pos_idx] = stack[stack.length-1];
+        stack.pop();
+//        stack.splice(cur_pos_idx, 1);
+        fillCellAndExit(cur_pos, "limegreen");
+    }
+}
+
+
+
+/////////////////////////////
+// MAZE COLOR FILL //////////
+/////////////////////////////
+
+var distance = 0;
+var frontier = [start_pos];
+var max_dist = 0;
+
+function getMaxDistance() {
+    while (frontier.length > 0) {
+        max_dist++;
+        var new_frontier = [];
+
+        for (var frontier_idx = 0; frontier_idx < frontier.length; frontier_idx++) {
+            var pos = frontier[frontier_idx];
+
+            var open_dirs = getOpenDirections(pos);
+            for (var dir_idx = 0; dir_idx < open_dirs.length; dir_idx++) {
+                var test_dir = open_dirs[dir_idx];
+                if ((maze[pos] & test_dir) == test_dir) {
+                    var new_pos = undefined;
+                    if (test_dir == DIR_NORTH) {
+                        new_pos = goNorth(pos);
+                    }
+                    else if (test_dir == DIR_SOUTH) {
+                        new_pos = goSouth(pos);
+                    }
+                    else if (test_dir == DIR_EAST) {
+                        new_pos = goEast(pos);
+                    }
+                    else if (test_dir == DIR_WEST) {
+                        new_pos = goWest(pos);
+                    }
+
+                    new_frontier.push(new_pos);
+                    maze[new_pos] |= VISITED;
+                }
+            }
+        }
+        frontier = new_frontier;
+    }
+    resetVisited();
+    frontier = [start_pos];
+    return max_dist;
+}
+
+function doNextColorFillMazeStep() {
+    if (frontier.length == 0) {
+        return true;
+    }
+
+    var new_frontier = [];
+    var hue = ((((distance / max_dist) * 360) + start_hue) % 360).toString();
+    var color = "hsl(" + hue + ", 100%, 50%)";
+    for (var frontier_idx = 0; frontier_idx < frontier.length; frontier_idx++) {
+        var pos = frontier[frontier_idx];
+        fillCellAndExit(pos, color);
+
+        var open_dirs = getOpenDirections(pos);
+        for (var dir_idx = 0; dir_idx < open_dirs.length; dir_idx++) {
+            var test_dir = open_dirs[dir_idx];
+            if ((maze[pos] & test_dir) == test_dir) {
+                var new_pos = undefined;
+                if (test_dir == DIR_NORTH) {
+                    new_pos = goNorth(pos);
+                }
+                else if (test_dir == DIR_SOUTH) {
+                    new_pos = goSouth(pos);
+                }
+                else if (test_dir == DIR_EAST) {
+                    new_pos = goEast(pos);
+                }
+                else if (test_dir == DIR_WEST) {
+                    new_pos = goWest(pos);
+                }
+
+                new_frontier.push(new_pos);
+                maze[new_pos] |= VISITED;
+            }
+        }
+    }
+    frontier = new_frontier;
+    distance++;
+}
+
+
+
+/////////////////////////////
+// VISUALIZATION CONTROLS ///
+/////////////////////////////
+
+var timer = undefined;
+var running = false;
+var force_stop = false;
+var finished_generating = false;
+var finished_color_fill = false;
+var started_color_fill = false;
+var step_interval = 25;
+
+function mazeGenerationController() {
+    if (!finished_generating) {
+        finished_generating = doNextMazeGenerationStep();
+        if (finished_generating) {
+            stopRunning();
+            force_stop = true;
+            resetMazeColor();
+            resetVisited();
+            getMaxDistance();
+        }
+    }
+}
+function finishGeneratingMaze() {
+    if (!finished_generating) {
+        stopRunning();
+        force_stop = true;
+        while (!finished_generating) {
+            finished_generating = doNextMazeGenerationStep();
+        }
+        resetMazeColor();
+        resetVisited();
+        getMaxDistance();
+    }
+}
+
+function colorFillMazeController() {
+    if (!finished_color_fill) {
+        finished_color_fill = doNextColorFillMazeStep();
+        if (finished_color_fill) {
+            stopRunning();
+            force_stop = true;
+        }
+    }
+}
+function finishColorFillMaze() {
+    if (!finished_color_fill) {
+        stopRunning();
+        force_stop = true;
+        while (!finished_color_fill) {
+            finished_color_fill = doNextColorFillMazeStep();
+        }
+    }
+}
+
+function startRunning() {
+    if (!running && !force_stop) {
+        if (!finished_generating) {
+            running = true;
+            timer = window.setInterval(mazeGenerationController, step_interval);
+        }
+        else if (!finished_color_fill) {
+            running = true;
+            timer = window.setInterval(colorFillMazeController, step_interval);
+        }
+    }
+}
+function stopRunning() {
+    if (timer != undefined) {
+        window.clearInterval(timer);
+    }
+    running = false;
+}
+
+function changeStepInterval(factor) {
+    if (running) {
+        step_interval = Math.max(Math.min(step_interval * factor, 10000), 0.25);
+        stopRunning();
+        startRunning();
+    }
+}
+
+document.addEventListener("keydown", function(evt) {
+    if (evt.key == " ") {
+        if (running) {
+            force_stop = true;
+            stopRunning();
+        }
+        else {
+            if (finished_generating && !started_color_fill) {
+                started_color_fill = true;
+            }
+            force_stop = false;
+            startRunning();
+        }
+    }
+    else if (evt.key == ".") {
+        if (!running) {
+            if (!finished_generating) {
+                mazeGenerationController();
+            }
+            else if (!finished_color_fill) {
+                colorFillMazeController();
+            }
+        }
+    }
+    else if (evt.keyCode == 37) {
+        changeStepInterval(1.2);
+    }
+    else if (evt.keyCode == 39) {
+        changeStepInterval(0.8);
+    }
+    else if (evt.keyCode == 38) {
+        changeStepInterval(0.01);
+    }
+    else if (evt.keyCode == 13) {
+        if (!finished_generating) {
+            finishGeneratingMaze();
+        }
+        else if (!started_color_fill) {
+            started_color_fill = true;
+            force_stop = false;
+            startRunning();
+        }
+        else if (!finished_color_fill) {
+            finishColorFillMaze();
+        }
+    }
+});
+document.addEventListener("blur", function(evt) {
+    if (running) {
+        stopRunning();
+    }
+});
+document.addEventListener("focus", function(evt) {
+    if (!running && !force_stop) {
+        startRunning();
+    }
+});
+
+startRunning();
+</script>
+</body>
+</html>
